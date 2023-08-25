@@ -9,14 +9,406 @@ import { aliasMap } from "../settings";
 const defaultStats = {
   loaded: false,
   data: [],
+  allData: [],
+  extent: [undefined, undefined],
+  timeline: {
+    ...defaultTimeline,
+    stat: timelineSettings.stats(defaultTimeline).cumTotal,
+    data: [],
+  },
+  pie: {
+    value: pieSettings.values.elevation,
+    group: pieSettings.groups.sport_group,
+    timeGroup: pieSettings.timeGroups.all(2023),
+    loaded: false,
+    data: [],
+  },
+  calendar: {
+    value: calendarSettings.values.elevation,
+    extent: [undefined, undefined],
+    loaded: false,
+    data: [],
+    activitiesByDate: {},
+    colorScaleFn: (colors) => (value) => colors[0],
+    onClick: () => {},
+  },
+  scatter: {
+    xValue: scatterSettings.values.date,
+    yValue: scatterSettings.values.elevation,
+    size: scatterSettings.values.distance,
+    group: scatterSettings.groups.sport_group,
+    loaded: false,
+    extent: {
+      x: [undefined, undefined],
+      y: [undefined, undefined],
+      size: [undefined, undefined],
+    },
+    onClick: () => {},
+    selectionLayer: () => {},
+  },
   dataExtent: {},
 };
 
 const StatsContext = createContext(defaultStats);
 
+const updateScatter = (data, scatter, selected, setSelected) => {
+  const groups = d3.group(data, scatter.group.fun);
+
+  const extent = {
+    x: d3.extent(data, scatter.xValue.fun),
+    y: d3.extent(data, scatter.yValue.fun),
+    size: d3.extent(data, scatter.size.fun),
+  };
+
+  const outData = d3.map(groups, ([key, value]) => ({
+    id: key,
+    color: scatter.group.color(key),
+    icon: scatter.group.icon(key),
+    data: value.map((d) => ({
+      x: scatter.xValue.fun(d),
+      y: scatter.yValue.fun(d),
+      selected: d.selected,
+      id: d.id,
+      title: d.name,
+      size:
+        ((scatter.size.fun(d) - extent.size[0]) /
+          (extent.size[1] - extent.size[0])) *
+          10 +
+        2,
+    })),
+  }));
+
+  const selectionLayer = (context, chart) => {
+    const onMove = (e) => {
+      if (context.canvas.getAttribute("drawingRect") == "true")
+        context.canvas.setAttribute("currentRectEnd", [e.offsetX, e.offsetY]);
+    };
+
+    const onMouseDown = (e) => {
+      if (e.shiftKey) {
+        console.log("start selection");
+        context.canvas.setAttribute("drawingRect", "true");
+        context.canvas.setAttribute("currentRectStart", [
+          e.offsetX - chart.margin.left,
+          e.offsetY - chart.margin.top,
+        ]);
+        context.canvas.addEventListener("mouseup", onMouseUp);
+        context.canvas.addEventListener("mousemove", onMove);
+        //rect[0] = e.offsetX - chart.margin.left;
+        //rect[1] = e.offsetY - chart.margin.top;
+      }
+    };
+
+    const onMouseUp = (e) => {
+      if (context.canvas.getAttribute("drawingRect") == "false") return;
+      console.log("end selection");
+      context.canvas.setAttribute("drawingRect", "false");
+      const rectStart = context.canvas
+        .getAttribute("currentRectStart")
+        .split(",");
+      const rectEnd = context.canvas.getAttribute("currentRectEnd").split(",");
+      const rect = [
+        ...rectStart.map((f) => parseInt(f)),
+        rectEnd[0] - rectStart[0] - chart.margin.left,
+        rectEnd[1] - rectStart[1] - chart.margin.top,
+      ];
+      const selectedNodes = chart.nodes.filter(
+        (node) =>
+          node.x >= rect[0] &&
+          node.x <= rect[0] + rect[2] &&
+          node.y >= rect[1] &&
+          node.y <= rect[1] + rect[3]
+      );
+      setSelected(selectedNodes.map((f) => f.data.id));
+      context.canvas.removeEventListener("mouseup", onMouseUp);
+      context.canvas.removeEventListener("mousemove", onMove);
+    };
+
+    const onClick = (e) => {
+      if (e.shiftKey) return;
+      const selectedNodes = chart.nodes.filter(
+        (node) =>
+          Math.pow(node.x - e.offsetX + chart.margin.left, 2) +
+            Math.pow(node.y - e.offsetY + chart.margin.top, 2) <
+          15
+      );
+      if (selectedNodes && selectedNodes.length > 0) {
+        console.log(selectedNodes);
+        setSelected(selectedNodes.map((f) => f.data.id));
+      } else setSelected([]);
+    };
+
+    chart.nodes.forEach((node) => {
+      if (selected.includes(node.data.id)) {
+        context.beginPath();
+        context.arc(node.x, node.y, node.size / 2 + 2, 0, 2 * Math.PI);
+        context.strokeStyle = "#000000";
+        context.stroke();
+      }
+    });
+
+    if (context.canvas.getAttribute("drawingRect") == "true") {
+      const rectStart = context.canvas
+        .getAttribute("currentRectStart")
+        .split(",");
+      const rectEnd = context.canvas.getAttribute("currentRectEnd").split(",");
+      context.beginPath();
+      context.rect(
+        ...rectStart,
+        rectEnd[0] - rectStart[0] - chart.margin.left,
+        rectEnd[1] - rectStart[1] - chart.margin.top
+      );
+      context.strokeStyle = "#000000";
+      context.stroke();
+    }
+    if (context.canvas.getAttribute("selectionClickListener") !== "true") {
+      console.log("adding click listener");
+      context.canvas.setAttribute("selectionClickListener", "true");
+      context.canvas.addEventListener("click", onClick);
+    }
+    if (context.canvas.getAttribute("selectionDownListener") !== "true") {
+      console.log("adding down listener");
+      context.canvas.setAttribute("selectionDownListener", "true");
+      context.canvas.addEventListener("mousedown", onMouseDown);
+    }
+  };
+
+  return {
+    data: outData,
+    extent: extent,
+    selectionLayer: selectionLayer,
+  };
+};
+
+const updateCalendar = (data, calendar, selectedDays, setSelected) => {
+  const activitiesByDate = d3.group(data, (f) =>
+    d3tf.timeFormat("%Y-%m-%d")(f.date)
+  );
+  const outData = d3.map(activitiesByDate, ([key, value]) => ({
+    value: selectedDays.includes(key) ? "selected" : calendar.value.fun(value),
+    day: key,
+  }));
+  const onClick = (point) => {
+    const selected = activitiesByDate.get(point.day);
+    if (selected) setSelected(selected.map((f) => f.id));
+    else setSelected([]);
+  };
+  return {
+    data: outData,
+    activitiesByDate: activitiesByDate,
+    onClick: onClick,
+  };
+};
+
+const updatePie = (data, pie) => {
+  const filteredData = d3.filter(data, (f) => pie.timeGroup.filter(f));
+  const rollup = d3.rollups(filteredData, pie.value.fun, pie.group.fun);
+  rollup.sort(pie.group.sort);
+  return d3.map(rollup, ([key, value]) => ({
+    id: key,
+    value: value,
+    color: pie.group.color(key),
+  }));
+};
+
+const updateTimeline = (data, timeline, setTimeline) => {
+  const extent = d3.extent(data, (d) => d.date);
+  const years = extent.map((d) => d.getFullYear());
+  const extentInYear = (year) => [
+    year == years[0] ? extent[0] : new Date(year, 0, 1),
+    year == years[1] ? extent[1] : new Date(year, 11, 31),
+  ];
+  const rollup = d3.rollup(
+    data,
+    timeline.stat.fun,
+    (f) =>
+      JSON.stringify({
+        group: timeline.group.fun(f),
+        year: timeline.timeGroup.fun(f),
+      }),
+    (f) => timeline.timePeriod.fun(f.date)
+  );
+  const fillZeros = (data, extent) => {
+    const out = [];
+    timeline.timePeriod.range(extent).forEach((date) => {
+      const transformedDate = timeline.timePeriod.fun(date);
+      if (data.has(transformedDate)) {
+        out.push([transformedDate, data.get(transformedDate)]);
+      } else {
+        out.push([transformedDate, 0]);
+      }
+    });
+    return out;
+  };
+
+  const makeCumulative = (data) => {
+    return d3.zip(
+      data.map(([x, y]) => x),
+      d3.cumsum(data.map(([x, y]) => y))
+    );
+  };
+  const rollupData = Array.from(rollup.entries()).map(([id, data]) => {
+    id = JSON.parse(id);
+    return [
+      id,
+      timeline.stat.cumulative
+        ? makeCumulative(
+            fillZeros(
+              data,
+              timeline.timeGroup.highlight
+                ? extentInYear(id.year)
+                : timeline.timePeriod.relative
+                ? extentInYear(2018)
+                : extent
+            )
+          )
+        : fillZeros(
+            data,
+            timeline.timeGroup.highlight
+              ? extentInYear(id.year)
+              : timeline.timePeriod.relative
+              ? extentInYear(2018)
+              : extent
+          ),
+    ];
+  });
+
+  const outData = rollupData.map(([id, data]) => ({
+    id: JSON.stringify(id),
+    color: timeline.group.color(id.group),
+    icon: timeline.group.icon(id.group),
+    alpha: id.year == timeline.timeGroup.highlight ? 1 : 0.1,
+    data: data.map(([x, y]) => ({ x: d3tf.timeFormat("%Y-%m-%d")(x), y: y })),
+    xLabel: (x) =>
+      ("year" in id ? id.year + "-" : "") + timeline.timePeriod.format(x),
+    yLabel: (y) => y + timeline.stat.unit,
+    onClick: () => {
+      if ("year" in id)
+        setTimeline({
+          ...timeline,
+          timeGroup: timelineSettings.timeGroups.byYear(id.year),
+        });
+    },
+  }));
+  return outData;
+};
+
 export function StatsContextProvider({ children }) {
   const activityContext = useContext(ActivityContext);
   const [state, setState] = useState(defaultStats);
+
+  const setTimeline = (newTimeline) => {
+    const timeline = {
+      ...state.timeline,
+      ...newTimeline,
+      extent: state.extent,
+    };
+    // stats depend on the other props
+    if (!("stat" in newTimeline))
+      timeline.stat = timelineSettings.stats(timeline)[timeline.stat.id];
+    // if switching from relative to absolute, reset timeGroup to all
+    if (
+      "timePeriod" in newTimeline &&
+      !newTimeline.timePeriod.relative &&
+      timeline.timeGroup.highlight
+    )
+      timeline.timeGroup = timelineSettings.timeGroups.all(
+        timeline.timeGroup.highlight
+      );
+
+    const data = updateTimeline(state.data, timeline, setTimeline);
+    setState((state) => ({
+      ...state,
+      timeline: {
+        ...state.timeline,
+        ...timeline,
+        data: data,
+        loaded: true,
+      },
+    }));
+  };
+
+  const setPie = (newPie) => {
+    const pie = { ...state.pie, ...newPie };
+    const data = updatePie(state.data, pie);
+    setState((state) => ({
+      ...state,
+      pie: {
+        ...pie,
+        data: data,
+        loaded: true,
+      },
+    }));
+  };
+
+  const setCalendar = (newCalendar) => {
+    const calendar = { ...state.calendar, ...newCalendar };
+    const colorScaleFn = (colors) => {
+      const realColors = colors.slice(1, colors.length - 1);
+      return (value) => {
+        var retVal;
+        if (value === 0) retVal = colors[0];
+        else if (value === "selected") retVal = colors[colors.length - 1];
+        else
+          retVal =
+            realColors[
+              Math.floor(
+                Math.min(value / calendar.value.maxValue, 1) *
+                  (realColors.length - 1)
+              )
+            ];
+        return retVal;
+      };
+    };
+    const data = updateCalendar(
+      state.data,
+      calendar,
+      selectionContext.selected.map((id) =>
+        activityContext.activityDict[id].properties.start_date_local.slice(
+          0,
+          10
+        )
+      ),
+      selectionContext.setSelected
+    );
+    setState((state) => ({
+      ...state,
+      calendar: {
+        ...calendar,
+        ...data,
+        extent: d3.extent(state.data, (f) => f.date),
+        colorScaleFn: colorScaleFn,
+        loaded: true,
+      },
+    }));
+  };
+
+  const setScatter = (newScatter) => {
+    const scatter = { ...state.scatter, ...newScatter };
+    const data = updateScatter(
+      state.data,
+      scatter,
+      selectionContext.selected,
+      selectionContext.setSelected
+    );
+    setState((state) => ({
+      ...state,
+      scatter: {
+        ...scatter,
+        ...data,
+        loaded: true,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    if (activityContext.loaded && state.data.length > 0) {
+      setTimeline({});
+      setPie({});
+      setCalendar({});
+      setScatter({});
+    }
+  }, [state.data]);
 
   useEffect(() => {
     if (activityContext.loaded) {
@@ -26,97 +418,6 @@ export function StatsContextProvider({ children }) {
       data.forEach((feature) => {
         feature.date = new Date(feature.start_date_local);
       });
-      /*console.log(
-        d3a
-          .rollups(
-            data,
-            (v) => v.length,
-            (f) => aliasMap[f.sport_type],
-            (f) => f.date.getFullYear(),
-            (f) => f.date.getMonth()
-          )
-          .map(([sport, years]) =>
-            years.map(([year, data]) => [
-              [sport, year],
-              data.sort((a, b) => a[0] - b[0]),
-            ])
-          )
-          .flat()
-      );*/
-      const extent = d3a.extent(data, (d) => d.date);
-      const years = d3t.timeYear.range(
-        d3t.timeYear.floor(extent[0]),
-        extent[1]
-      );
-      //const month = d3t.timeMonth.range(...extent);
-      const weeks = d3t.timeWeek.range(
-        d3t.timeYear.floor(extent[0]),
-        extent[1]
-      );
-      //const day = d3t.timeDay.range(...extent);
-      /*console.log(
-        d3a.rollup(
-          days,
-          (v) => v.length,
-          (d) => d.getFullYear(),
-          (d) => d.getDay()
-        )
-      );
-      const years = d3t.timeYear.range(
-        d3t.timeYear.floor(extent[0]),
-        extent[1]
-      );
-      const dataExtent = {
-        week: [...Array(53).keys()].reduce(
-          (prev, week) => ({
-            ...prev,
-            [week]:
-              days.filter(
-                (date) => parseInt(d3tf.timeFormat("%W")(date)) === week
-              ).length / days.length,
-          }),
-          {}
-        ),
-        month: [...Array(12).keys()].reduce(
-          (prev, month) => ({
-            ...prev,
-            [month]:
-              days.filter((date) => date.getMonth() === month).length /
-              days.length,
-          }),
-          {}
-        ),
-        day: [...Array(7).keys()].reduce(
-          (prev, day) => ({
-            ...prev,
-            [day]:
-              days.filter((date) => date.getDay() === day).length / days.length,
-          }),
-          {}
-        ),
-        days: years.reduce(
-          (prev, year) => ({
-            ...prev,
-            [year.getFullYear()]: [...Array(7).keys()].reduce(
-              (prev, day) => ({
-                ...prev,
-                [day]:
-                  days.filter(
-                    (date) =>
-                      date.getFullYear() === year.getFullYear() &&
-                      date.getDay() === day
-                  ).length /
-                  days.filter(
-                    (date) => date.getFullYear() === year.getFullYear()
-                  ).length,
-              }),
-              {}
-            ),
-          }),
-          {}
-        ),
-      };
-      console.log(dataExtent);*/
       setState({
         loaded: true,
         data: data,

@@ -419,6 +419,199 @@ function YearlySummary() {
   );
 }
 
+const Scatter = () => {
+  const statsContext = useContext(StatsContext);
+  const values = scatterSettings.values;
+  const theme = useTheme();
+  var dataDict;
+  if (statsContext.scatter.data)
+    dataDict = d3.rollup(
+      statsContext.scatter.data,
+      (v) => v[0],
+      (d) => d.id
+    );
+
+  const ScatterTooltip = ({ point }) => {
+    const catProps = dataDict.get(point.serieId);
+    return (
+      <Chip
+        sx={{
+          backgroundColor: theme.palette.background.paper,
+          border: 1,
+          borderColor: catProps.color,
+        }}
+        size="small"
+        label={
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <FontAwesomeIcon
+              fontSize="small"
+              icon={catProps.icon}
+              color={catProps.color}
+            />
+            <Typography
+              sx={{
+                ml: 1,
+                fontSize: "small",
+              }}
+            >
+              {point.data.title}
+            </Typography>
+          </Box>
+        }
+        variant="filled"
+      />
+    );
+  };
+
+  return (
+    <>
+      <TitleBox>
+        <Typography variant="h6" key="heading">
+          Scatter
+        </Typography>
+        <CustomSelect
+          key="xValue"
+          propName="xValue"
+          value={statsContext.scatter.xValue}
+          name="X"
+          options={values}
+          setState={statsContext.setScatter}
+        />
+        <CustomSelect
+          key="yValue"
+          propName="yValue"
+          value={statsContext.scatter.yValue}
+          name="Y"
+          options={values}
+          setState={statsContext.setScatter}
+        />
+        <CustomSelect
+          key="size"
+          propName="size"
+          value={statsContext.scatter.size}
+          name="Size"
+          options={values}
+          setState={statsContext.setScatter}
+        />
+      </TitleBox>
+      {statsContext.scatter.loaded && statsContext.data.length > 0 && (
+        <ResponsiveScatterPlotCanvas
+          data={statsContext.scatter.data}
+          margin={{ top: 10, right: 40, bottom: 100, left: 60 }}
+          xScale={{ type: "linear", min: "auto", max: "auto" }}
+          yScale={{ type: "linear", min: "auto", max: "auto" }}
+          blendMode="multiply"
+          xFormat={statsContext.scatter.xValue.format}
+          yFormat={statsContext.scatter.yValue.format}
+          nodeSize={(d) => d.data.size}
+          colors={(d) => dataDict.get(d.serieId).color}
+          axisTop={null}
+          axisRight={null}
+          axisBottom={{
+            orient: "bottom",
+            tickSize: 5,
+            tickPadding: 5,
+            tickRotation: 0,
+            format: statsContext.scatter.xValue.formatAxis,
+          }}
+          axisLeft={{
+            orient: "left",
+            tickSize: 5,
+            tickPadding: 5,
+            tickRotation: 0,
+            format: statsContext.scatter.yValue.formatAxis,
+          }}
+          tooltip={({ node }) => <ScatterTooltip point={node} />}
+          renderNode={(ctx, node) => {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, node.size / 2, 0, 2 * Math.PI);
+            ctx.fillStyle = node.color;
+            ctx.fill();
+            if (node.data.selected) {
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, node.size / 2 + 2, 0, 2 * Math.PI);
+              ctx.strokeStyle = "#000000";
+              ctx.stroke();
+            }
+          }}
+          onClick={statsContext.scatter.onClick}
+        />
+      )}
+    </>
+  );
+};
+
+const TypePie = () => {
+  const statsContext = useContext(StatsContext);
+  const values = pieSettings.values;
+  const groups = pieSettings.groups;
+  const timeGroups = pieSettings.timeGroups;
+
+  return (
+    <>
+      <TitleBox>
+        <Typography variant="h6" key="title">
+          Sport
+        </Typography>
+        <CustomSelect
+          key="value"
+          propName="value"
+          value={statsContext.pie.value}
+          name="Value"
+          options={values}
+          setState={statsContext.setPie}
+        />
+        <CustomSelect
+          key="group"
+          propName="group"
+          value={statsContext.pie.group}
+          name="Sport"
+          options={groups}
+          setState={statsContext.setPie}
+        />
+        <CustomPicker
+          key="timeGroup"
+          propName="timeGroup"
+          options={timeGroups}
+          value={statsContext.pie.timeGroup}
+          range={[2014, 2023]}
+          setState={statsContext.setPie}
+        />
+      </TitleBox>
+      {!statsContext.pie.loaded && (
+        <Skeleton
+          variant="rounded"
+          width="90%"
+          height="80%"
+          sx={{ margin: "auto" }}
+        />
+      )}
+      {statsContext.pie.loaded && (
+        <ResponsivePie
+          data={statsContext.pie.data}
+          margin={{ top: 40, right: 120, bottom: 100, left: 120 }}
+          innerRadius={0.6}
+          padAngle={0.7}
+          cornerRadius={5}
+          activeOuterRadiusOffset={8}
+          borderWidth={0}
+          arcLinkLabelsSkipAngle={10}
+          arcLinkLabelsThickness={2}
+          arcLinkLabelsColor={{ from: "color" }}
+          arcLabelsSkipAngle={20}
+          colors={(d) => d.data.color}
+          valueFormat={statsContext.pie.value.format}
+        />
+      )}
+    </>
+  );
+};
+
 export default function StatsView() {
   const statsContext = useContext(StatsContext);
   return (
