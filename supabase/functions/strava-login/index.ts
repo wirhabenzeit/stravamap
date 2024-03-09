@@ -4,6 +4,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import jwt from "npm:jsonwebtoken@9.0.2";
 
 serve(async (req: Request) => {
   console.log(Deno.env.get("STRAVA_CLIENT_ID"));
@@ -26,6 +27,19 @@ serve(async (req: Request) => {
   const json = await response.json();
   console.log(json);
   if ("athlete" in json) {
+    const exp = 60 * 60 * 24 + new Date().getTime();
+    const accessToken = jwt.sign(
+      {
+        role: "authenticated", // VERY IMPORTANT!
+        aud: "authenticated", // VERY IMPORTANT!
+        sub: `${json.athlete.id}`, // VERY IMPORTANT!
+        id: json.athlete.id,
+        firstname: json.athlete.firstname,
+        lastname: json.athlete.lastname,
+        exp, // VERY IMPORTANT!
+      },
+      Deno.env.get("JWT_SECRET"),
+    );
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL"),
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
@@ -34,7 +48,7 @@ serve(async (req: Request) => {
           autoRefreshToken: false,
           persistSession: false,
         },
-      }
+      },
     );
     const { data2, error2 } = await supabaseClient
       .from("strava-athletes")
@@ -53,12 +67,18 @@ serve(async (req: Request) => {
         profile_medium: json.athlete.profile_medium,
       })
       .eq("id", json["athlete"]["id"]);
-    return new Response(JSON.stringify({ athlete: json["athlete"]["id"] }), {
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
+    return new Response(
+      JSON.stringify({
+        athlete: json["athlete"]["id"],
+        accessToken: accessToken,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
       },
-    });
+    );
   } else {
     return new Response(JSON.stringify({ Error: "No athlete in response" }), {
       headers: {

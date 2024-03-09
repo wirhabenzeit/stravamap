@@ -4,11 +4,6 @@ import Cookies from "js-cookie";
 import { useSearchParams } from "react-router-dom";
 import { usePrevious } from "../App";
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
-
 const defaultState = {
   activityDict: {},
   geoJson: { type: "FeatureCollection", features: [] },
@@ -60,6 +55,8 @@ function ActivityContextProvider({ children }) {
   const previousState = usePrevious(state);
   let [searchParams, setSearchParams] = useSearchParams();
 
+  var supabase;
+
   console.log("ActivityContextProvider render");
 
   const getAthleteData = async (athlete) => {
@@ -81,7 +78,7 @@ function ActivityContextProvider({ children }) {
       .from("strava-activities")
       .select("*", { count: "exact", head: true })
       .eq("athlete", athlete);
-
+    console.log(nodata, counterror, count, status);
     const pageSize = 1000;
     const numPages = Math.ceil(count / pageSize);
     const ranges = Array.from({ length: numPages }, (_, i) => [
@@ -194,7 +191,35 @@ function ActivityContextProvider({ children }) {
     return data.map(parseFeature);
   };
 
-  const setAthlete = async (athlete) => {
+  const setAthlete = async (athlete, access_token = "") => {
+    supabase = createClient(
+      import.meta.env.VITE_SUPABASE_URL,
+      import.meta.env.VITE_SUPABASE_ANON_KEY,
+      {
+        //   db: {
+        //     schema: "public",
+        //   },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+        global: {
+          headers: {
+            apikey: access_token,
+          },
+          params: {
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+        },
+      }
+    );
+    const test = await supabase.auth.getUser();
+    console.log(test);
+    // console.log(
+    //   access_token,
+    //   import.meta.env.VITE_SUPABASE_URL,
+    //   import.meta.env.VITE_SUPABASE_ANON_KEY
+    // );
     const athlete_data = await getAthleteData(athlete);
     const activities = await getAthleteActivities(athlete);
     setState((prevState) => ({
@@ -231,15 +256,18 @@ function ActivityContextProvider({ children }) {
       "/functions/v1/strava-login?code=" +
       code;
     const response = await fetch(url);
+    console.log(response);
     const data = await response.json();
+    console.log(data);
     if (data.athlete != undefined) {
-      Cookies.set("athlete", data.athlete, { expires: 365 });
+      Cookies.set("athlete", data.athlete, { expires: 7 });
+      Cookies.set("access_token", data.accessToken, { expires: 7 });
       history.replaceState(
         {},
         "StravaMap",
         window.location.origin + window.location.pathname
       );
-      setAthlete(data.athlete);
+      setAthlete(data.athlete, data.accessToken);
     }
   };
 
@@ -268,7 +296,7 @@ function ActivityContextProvider({ children }) {
           .map((x) => parseInt(x))
       );
     else if (Cookies.get("athlete") != undefined) {
-      setAthlete(Number(Cookies.get("athlete")));
+      setAthlete(Number(Cookies.get("athlete")), Cookies.get("access_token"));
     } else setGuestMode();
   }, []);
 
